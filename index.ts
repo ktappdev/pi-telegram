@@ -344,6 +344,31 @@ async function cleanupStaleLocks(): Promise<number> {
 	}
 }
 
+async function getProjectInfo(): Promise<{ folder: string; description?: string }> {
+	const folder = basename(process.cwd());
+	let description: string | undefined;
+
+	try {
+		const agentsPath = join(process.cwd(), "AGENTS.md");
+		const content = await readFile(agentsPath, "utf8");
+		// Get first paragraph (non-empty lines until blank line)
+		const lines: string[] = [];
+		for (const line of content.split("\n")) {
+			const trimmed = line.trim();
+			if (!trimmed || trimmed.startsWith("#")) break;
+			lines.push(trimmed);
+			if (lines.length >= 3) break; // Max 3 lines for description
+		}
+		if (lines.length > 0) {
+			description = lines.join(" ").slice(0, 200);
+		}
+	} catch {
+		// AGENTS.md not found - that's fine
+	}
+
+	return { folder, description };
+}
+
 export default function (pi: ExtensionAPI) {
 	let config: TelegramConfig = {};
 	let pollingController: AbortController | undefined;
@@ -956,6 +981,7 @@ export default function (pi: ExtensionAPI) {
 			config.allowedUserId = message.from.id;
 			await writeConfig(config);
 			updateStatus(ctx);
+			ctx.ui.notify(`Telegram bridge paired with @${message.from.username ?? message.from.id}.`, "info");
 			await sendTextReply(message.chat.id, message.message_id, "Telegram bridge paired with this account.");
 		}
 
@@ -1039,7 +1065,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			paths: Type.Array(Type.String({ description: "Local file path to attach" }), { minItems: 1, maxItems: MAX_ATTACHMENTS_PER_TURN }),
 		}),
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (!activeTelegramTurn) {
 				throw new Error("telegram_attach can only be used while replying to an active Telegram turn");
 			}
@@ -1055,6 +1081,7 @@ export default function (pi: ExtensionAPI) {
 				activeTelegramTurn.queuedAttachments.push({ path: inputPath, fileName: basename(inputPath) });
 				added.push(inputPath);
 			}
+			ctx.ui.notify(`Queued ${added.length} file(s) for Telegram attachment.`, "info");
 			return {
 				content: [{ type: "text", text: `Queued ${added.length} Telegram attachment(s).` }],
 				details: { paths: added },
@@ -1145,6 +1172,24 @@ export default function (pi: ExtensionAPI) {
 					// Lock creation failed but polling is already started - log warning
 					const message = lockError instanceof Error ? lockError.message : String(lockError);
 					updateStatus(ctx, `lock warning: ${message}`);
+				}
+			}
+
+			// Notify user of successful connection
+			ctx.ui.notify(`Telegram bridge connected to @${config.botUsername ?? "bot"}.`, "info");
+
+			// Send Telegram message if paired with a user
+			if (config.allowedUserId !== undefined) {
+				const { folder, description } = await getProjectInfo();
+				const messageParts = [`\u{1F4E1} New connection - ${folder}`];
+				if (description) {
+					messageParts.push(`\u{1F4DD} ${description}`);
+				}
+				const connectionMessage = messageParts.join("\n");
+				try {
+					await callTelegram("sendMessage", { chat_id: config.allowedUserId, text: connectionMessage });
+				} catch {
+					ctx.ui.notify("Bridge connected, but failed to send Telegram notification.", "warning");
 				}
 			}
 		},
