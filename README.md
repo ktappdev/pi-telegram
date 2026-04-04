@@ -49,6 +49,8 @@ The Telegram bridge is session-local. Connect it only in the pi session that sho
 /telegram-connect
 ```
 
+If the bot is already connected to another session, you'll see a warning. Disconnect from the other session first.
+
 To stop polling in the current session:
 
 ```bash
@@ -125,10 +127,40 @@ It tries Telegram draft streaming first with `sendMessageDraft`. If that is not 
 
 ## Notes
 
-- Only one pi session should be connected to the bot at a time
+- Only one pi session should be connected to the bot at a time (see Multi-session protection below)
 - Replies are sent as normal Telegram messages, not quote-replies
 - Long replies are split below Telegram's 4096 character limit
 - Outbound files are sent via `telegram_attach`
+
+## Features
+
+### Multi-session protection
+
+The extension uses a lock file (`~/.pi/agent/telegram-locks.json`) to prevent accidentally connecting the same bot token in multiple pi sessions.
+
+If you try to connect when another session is already using the bot:
+- You'll see a warning with the other session's PID
+- The connection is blocked until you disconnect from the other session
+
+To disconnect from another session, use `/telegram-disconnect` in that pi session.
+
+### Stale lock recovery
+
+If a pi session crashes or is killed while connected, the lock is automatically detected as stale after 1 hour. On next connect attempt, the extension:
+- Reclaims the stale lock automatically
+- Notifies you that it recovered from a previous session
+
+Stale locks are also cleaned up on pi startup.
+
+### Time gap detection
+
+When resuming a conversation after more than 24 hours, the extension:
+- Prepends a notice to the prompt so pi knows this may be a fresh context
+- Pi is informed that you're messaging from Telegram (mobile-first, async)
+
+Example notice: `[telegram] ⚠️ It's been 3 days since your last message. You may be starting a fresh conversation.`
+
+This helps pi understand that you might be starting a new topic rather than continuing a previous conversation.
 
 ## License
 
