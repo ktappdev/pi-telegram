@@ -1,0 +1,19 @@
+# Pi agent sessions
+.pi/agent-sessions/
+
+# Telegram extension
+.pi/agent/telegram.json
+.pi/agent/telegram-locks.json
+.pi/agent/tmp/
+
+# Dependencies
+node_modules/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
