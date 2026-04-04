@@ -13,6 +13,7 @@ interface TelegramConfig {
 	botId?: number;
 	allowedUserId?: number;
 	lastUpdateId?: number;
+	lastTelegramMessageTime?: number;
 }
 
 interface TelegramApiResponse<T> {
@@ -166,7 +167,12 @@ Telegram bridge extension is active.
 - Messages forwarded from Telegram are prefixed with "[telegram]".
 - [telegram] messages may include local temp file paths for Telegram attachments. Read those files as needed.
 - If a [telegram] user asked for a file or generated artifact, use the telegram_attach tool with the local file path so the extension can send it with your next final reply.
-- Do not assume mentioning a local file path in plain text will send it to Telegram. Use telegram_attach.`;
+- Do not assume mentioning a local file path in plain text will send it to Telegram. Use telegram_attach.
+
+Context about Telegram:
+- User is messaging from Telegram, a mobile-first chat app. Expect asynchronous conversations with possible time gaps between messages.
+- Keep responses concise and scannable when appropriate, as mobile users read on small screens.
+- If a conversation resumes after a long gap (>24h), the user may be starting a new topic or context has been lost. A gap notice is prepended to the prompt if applicable.`;
 
 function isTelegramPrompt(prompt: string): boolean {
 	return prompt.trimStart().startsWith(TELEGRAM_PREFIX);
@@ -738,6 +744,18 @@ export default function (pi: ExtensionAPI) {
 	async function dispatchAuthorizedTelegramMessages(messages: TelegramMessage[], ctx: ExtensionContext): Promise<void> {
 		const firstMessage = messages[0];
 		if (!firstMessage) return;
+
+		// Check for time gap since last message (>24 hours)
+		const now = Date.now();
+		const lastTime = config.lastTelegramMessageTime ?? 0;
+		const timeGap = now - lastTime;
+		const GAP_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+		const wasGap = timeGap > GAP_THRESHOLD_MS;
+
+		// Update last message timestamp
+		config.lastTelegramMessageTime = now;
+		await writeConfig(config);
+
 		const rawText = messages.map((message) => (message.text || message.caption || "").trim()).find((text) => text.length > 0) || "";
 		const lower = rawText.toLowerCase();
 
@@ -837,6 +855,18 @@ export default function (pi: ExtensionAPI) {
 		const historyTurns = preserveQueuedTurnsAsHistory ? queuedTelegramTurns.splice(0) : [];
 		preserveQueuedTurnsAsHistory = false;
 		const turn = await createTelegramTurn(messages, historyTurns);
+
+		// Inject gap notice if conversation resumed after >24 hours
+		if (wasGap && lastTime > 0) {
+			const daysSince = Math.floor(timeGap / (24 * 60 * 60 * 1000));
+			const daysText = daysSince === 1 ? "1 day" : `${daysSince} days`;
+			const gapNotice: TextContent = {
+				type: "text",
+				text: `[telegram] ⚠️ It's been ${daysText} since your last message. You may be starting a fresh conversation.\n\n`,
+			};
+			turn.content = [gapNotice, ...turn.content];
+		}
+
 		queuedTelegramTurns.push(turn);
 		if (ctx.isIdle()) {
 			startTypingLoop(ctx, turn.chatId);
