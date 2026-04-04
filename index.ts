@@ -152,8 +152,17 @@ interface TelegramMediaGroupState {
 	flushTimer?: ReturnType<typeof setTimeout>;
 }
 
+interface LockEntry {
+	botUsername: string;
+	pid: number;
+	sessionFile?: string;
+	connectedAt: number;
+}
+
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "telegram.json");
+const LOCK_FILE_PATH = join(homedir(), ".pi", "agent", "telegram-locks.json");
 const TEMP_DIR = join(homedir(), ".pi", "agent", "tmp", "telegram");
+const LOCK_STALE_THRESHOLD_MS = 3600000; // 1 hour
 const TELEGRAM_PREFIX = "[telegram]";
 const MAX_MESSAGE_LENGTH = 4096;
 const MAX_ATTACHMENTS_PER_TURN = 10;
@@ -288,6 +297,47 @@ async function readConfig(): Promise<TelegramConfig> {
 async function writeConfig(config: TelegramConfig): Promise<void> {
 	await mkdir(join(homedir(), ".pi", "agent"), { recursive: true });
 	await writeFile(CONFIG_PATH, JSON.stringify(config, null, "\t") + "\n", "utf8");
+}
+
+async function readLockFile(): Promise<Record<string, LockEntry>> {
+	try {
+		const content = await readFile(LOCK_FILE_PATH, "utf8");
+		return JSON.parse(content) as Record<string, LockEntry>;
+	} catch {
+		return {};
+	}
+}
+
+async function writeLockFile(locks: Record<string, LockEntry>): Promise<void> {
+	await mkdir(join(homedir(), ".pi", "agent"), { recursive: true });
+	await writeFile(LOCK_FILE_PATH, JSON.stringify(locks, null, "\t") + "\n", "utf8");
+}
+
+function isProcessRunning(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function cleanupStaleLocks(): Promise<number> {
+	const locks = await readLockFile();
+	const now = Date.now();
+	let cleaned = 0;
+	for (const [botId, entry] of Object.entries(locks)) {
+		const isStale = entry.connectedAt < now - LOCK_STALE_THRESHOLD_MS;
+		const processDead = !isProcessRunning(entry.pid);
+		if (isStale || processDead) {
+			delete locks[botId];
+			cleaned++;
+		}
+	}
+	if (cleaned > 0) {
+		await writeLockFile(locks);
+	}
+	return cleaned;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -1037,6 +1087,46 @@ export default function (pi: ExtensionAPI) {
 				await promptForConfig(ctx);
 				return;
 			}
+
+			// Check for existing lock
+			if (config.botId !== undefined) {
+				const locks = await readLockFile();
+				const existingLock = locks[String(config.botId)];
+				const now = Date.now();
+				const isStale = existingLock && (existingLock.connectedAt < now - LOCK_STALE_THRESHOLD_MS);
+				const processDead = existingLock && !isProcessRunning(existingLock.pid);
+
+				if (existingLock && !isStale && !processDead) {
+					ctx.ui.notify(
+						`Telegram bot @${config.botUsername ?? config.botId} is already connected to another session (PID ${existingLock.pid}).`,
+						"warning",
+					);
+					ctx.ui.notify("Use /telegram-disconnect in the other session first, or restart pi.", "info");
+					return;
+				}
+
+				// Auto-reclaim stale lock
+				if (existingLock && (isStale || processDead)) {
+					ctx.ui.notify(
+						`Reclaimed stale lock for @${config.botUsername ?? config.botId} (previous PID: ${existingLock.pid}, session: ${existingLock.sessionFile ?? "unknown"}).`,
+						"info",
+					);
+				}
+			}
+
+			// Create lock
+			if (config.botId !== undefined) {
+				const locks = await readLockFile();
+				const sessionFile = ctx.sessionManager.getSessionFile?.() ?? undefined;
+				locks[String(config.botId)] = {
+					botUsername: config.botUsername ?? "unknown",
+					pid: process.pid,
+					sessionFile,
+					connectedAt: Date.now(),
+				};
+				await writeLockFile(locks);
+			}
+
 			await startPolling(ctx);
 			updateStatus(ctx);
 		},
@@ -1045,6 +1135,15 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("telegram-disconnect", {
 		description: "Stop the Telegram bridge in this pi session",
 		handler: async (_args, ctx) => {
+			// Remove lock
+			if (config.botId !== undefined) {
+				const locks = await readLockFile();
+				const existingLock = locks[String(config.botId)];
+				if (existingLock && existingLock.pid === process.pid) {
+					delete locks[String(config.botId)];
+					await writeLockFile(locks);
+				}
+			}
 			await stopPolling();
 			updateStatus(ctx);
 		},
@@ -1053,10 +1152,24 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		config = await readConfig();
 		await mkdir(TEMP_DIR, { recursive: true });
+		// Clean up any stale locks on startup
+		const cleaned = await cleanupStaleLocks();
+		if (cleaned > 0) {
+			ctx.ui.notify(`Cleaned up ${cleaned} stale Telegram bot lock(s).`, "info");
+		}
 		updateStatus(ctx);
 	});
 
 	pi.on("session_shutdown", async (_event, _ctx) => {
+		// Remove lock if we own it
+		if (config.botId !== undefined) {
+			const locks = await readLockFile();
+			const existingLock = locks[String(config.botId)];
+			if (existingLock && existingLock.pid === process.pid) {
+				delete locks[String(config.botId)];
+				await writeLockFile(locks);
+			}
+		}
 		queuedTelegramTurns = [];
 		for (const state of mediaGroups.values()) {
 			if (state.flushTimer) clearTimeout(state.flushTimer);
