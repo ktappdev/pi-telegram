@@ -323,21 +323,25 @@ function isProcessRunning(pid: number): boolean {
 }
 
 async function cleanupStaleLocks(): Promise<number> {
-	const locks = await readLockFile();
-	const now = Date.now();
-	let cleaned = 0;
-	for (const [botId, entry] of Object.entries(locks)) {
-		const isStale = entry.connectedAt < now - LOCK_STALE_THRESHOLD_MS;
-		const processDead = !isProcessRunning(entry.pid);
-		if (isStale || processDead) {
-			delete locks[botId];
-			cleaned++;
+	try {
+		const locks = await readLockFile();
+		const now = Date.now();
+		let cleaned = 0;
+		for (const [botId, entry] of Object.entries(locks)) {
+			const isStale = entry.connectedAt < now - LOCK_STALE_THRESHOLD_MS;
+			const processDead = !isProcessRunning(entry.pid);
+			if (isStale || processDead) {
+				delete locks[botId];
+				cleaned++;
+			}
 		}
+		if (cleaned > 0) {
+			await writeLockFile(locks);
+		}
+		return cleaned;
+	} catch {
+		return 0;
 	}
-	if (cleaned > 0) {
-		await writeLockFile(locks);
-	}
-	return cleaned;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -1088,9 +1092,11 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			// Read lock file once and store
+			let locks = await readLockFile().catch(() => ({}));
+
 			// Check for existing lock
 			if (config.botId !== undefined) {
-				const locks = await readLockFile();
 				const existingLock = locks[String(config.botId)];
 				const now = Date.now();
 				const isStale = existingLock && (existingLock.connectedAt < now - LOCK_STALE_THRESHOLD_MS);
@@ -1114,21 +1120,33 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
-			// Create lock
-			if (config.botId !== undefined) {
-				const locks = await readLockFile();
-				const sessionFile = ctx.sessionManager.getSessionFile?.() ?? undefined;
-				locks[String(config.botId)] = {
-					botUsername: config.botUsername ?? "unknown",
-					pid: process.pid,
-					sessionFile,
-					connectedAt: Date.now(),
-				};
-				await writeLockFile(locks);
+			// Start polling first - only create lock if successful
+			try {
+				await startPolling(ctx);
+				updateStatus(ctx);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				ctx.ui.notify(`Failed to start polling: ${message}`, "error");
+				return;
 			}
 
-			await startPolling(ctx);
-			updateStatus(ctx);
+			// Create lock after successful polling start
+			if (config.botId !== undefined) {
+				try {
+					const sessionFile = ctx.sessionManager.getSessionFile?.() ?? undefined;
+					locks[String(config.botId)] = {
+						botUsername: config.botUsername ?? "unknown",
+						pid: process.pid,
+						sessionFile,
+						connectedAt: Date.now(),
+					};
+					await writeLockFile(locks);
+				} catch (lockError) {
+					// Lock creation failed but polling is already started - log warning
+					const message = lockError instanceof Error ? lockError.message : String(lockError);
+					updateStatus(ctx, `lock warning: ${message}`);
+				}
+			}
 		},
 	});
 
