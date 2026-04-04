@@ -351,12 +351,19 @@ async function getProjectInfo(): Promise<{ folder: string; description?: string 
 	try {
 		const agentsPath = join(process.cwd(), "AGENTS.md");
 		const content = await readFile(agentsPath, "utf8");
-		// Get first paragraph (non-empty lines until blank line)
+		// Find first content paragraph, skipping headings and leading blank lines
 		const lines: string[] = [];
+		let foundContent = false;
 		for (const line of content.split("\n")) {
 			const trimmed = line.trim();
-			if (!trimmed || trimmed.startsWith("#")) break;
+			// Skip empty lines before content starts
+			if (!trimmed && !foundContent) continue;
+			// Skip heading lines (any level)
+			if (trimmed.startsWith("#")) continue;
+			// Stop at blank line after finding content
+			if (!trimmed && foundContent) break;
 			lines.push(trimmed);
+			foundContent = true;
 			if (lines.length >= 3) break; // Max 3 lines for description
 		}
 		if (lines.length > 0) {
