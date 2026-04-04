@@ -181,7 +181,13 @@ Telegram bridge extension is active.
 Context about Telegram:
 - User is messaging from Telegram, a mobile-first chat app. Expect asynchronous conversations with possible time gaps between messages.
 - Keep responses concise and scannable when appropriate, as mobile users read on small screens.
-- If a conversation resumes after a long gap (>24h), the user may be starting a new topic or context has been lost. A gap notice is prepended to the prompt if applicable.`;
+- If a conversation resumes after a long gap (>24h), the user may be starting a new topic or context has been lost. A gap notice is prepended to the prompt if applicable.
+
+Telegram Formatting (HTML mode):
+- You can use HTML tags in your responses for better readability on Telegram.
+- Supported: <b>bold</b>, <i>italic</i>, <u>underline</u>, <s>strikethrough</s>, <code>inline code</code>, <pre>code blocks</pre>, <a href="url">links</a>, <tg-spoiler>spoilers</tg-spoiler>.
+- Use formatting to emphasize key points, code, or important information.
+- Keep mobile readability in mind - don't over-format.`;
 
 function isTelegramPrompt(prompt: string): boolean {
 	return prompt.trimStart().startsWith(TELEGRAM_PREFIX);
@@ -561,7 +567,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (state.messageId === undefined) {
-			const sent = await callTelegram<TelegramSentMessage>("sendMessage", { chat_id: chatId, text: truncated });
+			const sent = await callTelegram<TelegramSentMessage>("sendMessage", { chat_id: chatId, text: truncated, parse_mode: "HTML" });
 			state.messageId = sent.message_id;
 			state.mode = "message";
 			state.lastSentText = truncated;
@@ -589,7 +595,7 @@ export default function (pi: ExtensionAPI) {
 			return false;
 		}
 		if (state.mode === "draft") {
-			await callTelegram<TelegramSentMessage>("sendMessage", { chat_id: chatId, text: finalText });
+			await callTelegram<TelegramSentMessage>("sendMessage", { chat_id: chatId, text: finalText, parse_mode: "HTML" });
 			await clearPreview(chatId);
 			return true;
 		}
@@ -602,9 +608,10 @@ export default function (pi: ExtensionAPI) {
 		let lastMessageId: number | undefined;
 		for (const chunk of chunks) {
 			const sent = await callTelegram<TelegramSentMessage>("sendMessage", {
-				chat_id: chatId,
-				text: chunk,
-			});
+			chat_id: chatId,
+			text: chunk,
+			parse_mode: "HTML",
+		});
 			lastMessageId = sent.message_id;
 		}
 		return lastMessageId;
@@ -988,7 +995,7 @@ export default function (pi: ExtensionAPI) {
 			config.allowedUserId = message.from.id;
 			await writeConfig(config);
 			updateStatus(ctx);
-			ctx.ui.notify(`Telegram bridge paired with @${message.from.username ?? message.from.id}.`, "info");
+			ctx.ui.notify(`<b>Telegram bridge</b> paired with @${message.from.username ?? message.from.id}.`, "info");
 			await sendTextReply(message.chat.id, message.message_id, "Telegram bridge paired with this account.");
 		}
 
@@ -1183,18 +1190,18 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			// Notify user of successful connection
-			ctx.ui.notify(`Telegram bridge connected to @${config.botUsername ?? "bot"}.`, "info");
+			ctx.ui.notify(`<b>Telegram bridge</b> connected to @${config.botUsername ?? "bot"}.`, "info");
 
 			// Send Telegram message if paired with a user
 			if (config.allowedUserId !== undefined) {
 				const { folder, description } = await getProjectInfo();
-				const messageParts = [`\u{1F4E1} New connection - ${folder}`];
+				const messageParts = [`\u{1F4E1} <b>New connection</b> - <b>${folder}</b>`];
 				if (description) {
 					messageParts.push(`\u{1F4DD} ${description}`);
 				}
 				const connectionMessage = messageParts.join("\n");
 				try {
-					await callTelegram("sendMessage", { chat_id: config.allowedUserId, text: connectionMessage });
+					await callTelegram("sendMessage", { chat_id: config.allowedUserId, text: connectionMessage, parse_mode: "HTML" });
 				} catch {
 					ctx.ui.notify("Bridge connected, but failed to send Telegram notification.", "warning");
 				}
@@ -1223,7 +1230,7 @@ export default function (pi: ExtensionAPI) {
 					updateStatus(ctx, `lock cleanup warning: ${message}`);
 				}
 				updateStatus(ctx);
-				ctx.ui.notify("Telegram bridge disconnected.", "info");
+				ctx.ui.notify("<b>Telegram bridge</b> disconnected.", "info");
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				ctx.ui.notify(`Failed to disconnect: ${message}`, "error");
