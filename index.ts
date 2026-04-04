@@ -1008,7 +1008,7 @@ export default function (pi: ExtensionAPI) {
 			config.allowedUserId = message.from.id;
 			await writeConfig(config);
 			updateStatus(ctx);
-			ctx.ui.notify(`<b>Telegram bridge</b> paired with @${message.from.username ?? message.from.id}.`, "info");
+			ctx.ui.notify(`Telegram bridge paired with @${message.from.username ?? message.from.id}.`, "info");
 			await sendTextReply(message.chat.id, message.message_id, "Telegram bridge paired with this account.");
 		}
 
@@ -1203,7 +1203,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			// Notify user of successful connection
-			ctx.ui.notify(`<b>Telegram bridge</b> connected to @${config.botUsername ?? "bot"}.`, "info");
+			ctx.ui.notify(`Telegram bridge connected to @${config.botUsername ?? "bot"}.`, "info");
 
 			// Send Telegram message if paired with a user
 			if (config.allowedUserId !== undefined) {
@@ -1243,7 +1243,7 @@ export default function (pi: ExtensionAPI) {
 					updateStatus(ctx, `lock cleanup warning: ${message}`);
 				}
 				updateStatus(ctx);
-				ctx.ui.notify("<b>Telegram bridge</b> disconnected.", "info");
+				ctx.ui.notify("Telegram bridge disconnected.", "info");
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				ctx.ui.notify(`Failed to disconnect: ${message}`, "error");
