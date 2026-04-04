@@ -1153,17 +1153,29 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("telegram-disconnect", {
 		description: "Stop the Telegram bridge in this pi session",
 		handler: async (_args, ctx) => {
-			// Remove lock
-			if (config.botId !== undefined) {
-				const locks = await readLockFile();
-				const existingLock = locks[String(config.botId)];
-				if (existingLock && existingLock.pid === process.pid) {
-					delete locks[String(config.botId)];
-					await writeLockFile(locks);
+			try {
+				await stopPolling();
+				// Remove lock (best-effort)
+				try {
+					if (config.botId !== undefined) {
+						const locks = await readLockFile();
+						const existingLock = locks[String(config.botId)];
+						if (existingLock && existingLock.pid === process.pid) {
+							delete locks[String(config.botId)];
+							await writeLockFile(locks);
+						}
+					}
+				} catch (lockError) {
+					// Lock cleanup failed but polling is stopped - log warning
+					const message = lockError instanceof Error ? lockError.message : String(lockError);
+					updateStatus(ctx, `lock cleanup warning: ${message}`);
 				}
+				updateStatus(ctx);
+				ctx.ui.notify("Telegram bridge disconnected.", "info");
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				ctx.ui.notify(`Failed to disconnect: ${message}`, "error");
 			}
-			await stopPolling();
-			updateStatus(ctx);
 		},
 	});
 
@@ -1179,15 +1191,6 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (_event, _ctx) => {
-		// Remove lock if we own it
-		if (config.botId !== undefined) {
-			const locks = await readLockFile();
-			const existingLock = locks[String(config.botId)];
-			if (existingLock && existingLock.pid === process.pid) {
-				delete locks[String(config.botId)];
-				await writeLockFile(locks);
-			}
-		}
 		queuedTelegramTurns = [];
 		for (const state of mediaGroups.values()) {
 			if (state.flushTimer) clearTimeout(state.flushTimer);
@@ -1200,6 +1203,19 @@ export default function (pi: ExtensionAPI) {
 		currentAbort = undefined;
 		preserveQueuedTurnsAsHistory = false;
 		await stopPolling();
+		// Remove lock (best-effort)
+		try {
+			if (config.botId !== undefined) {
+				const locks = await readLockFile();
+				const existingLock = locks[String(config.botId)];
+				if (existingLock && existingLock.pid === process.pid) {
+					delete locks[String(config.botId)];
+					await writeLockFile(locks);
+				}
+			}
+		} catch (lockError) {
+			// Best-effort cleanup - nothing to report during shutdown
+		}
 	});
 
 	pi.on("before_agent_start", async (event) => {
