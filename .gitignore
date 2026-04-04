@@ -2,6 +2,9 @@
 # Pi Agent
 # =============================================================================
 
+# Project-local pi agent folder
+.pi/
+
 # Sessions
 .pi/agent-sessions/
 .pi/agent/*.jsonl
