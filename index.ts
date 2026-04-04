@@ -350,6 +350,19 @@ async function cleanupStaleLocks(): Promise<number> {
 	}
 }
 
+
+function convertMarkdownToHTML(text: string): string {
+	// Convert **bold** to <b>bold</b>
+	text = text.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+	// Convert *italic* to <i>italic</i>
+	text = text.replace(/\*([^*]+)\*/g, '<i>$1</i>');
+	// Convert __bold__ to <b>bold</b>
+	text = text.replace(/__([^_]+)__/g, '<b>$1</b>');
+	// Convert _italic_ to <i>italic</i>
+	text = text.replace(/_([^_]+)_/g, '<i>$1</i>');
+	return text;
+}
+
 async function getProjectInfo(): Promise<{ folder: string; description?: string }> {
 	const folder = basename(process.cwd());
 	let description: string | undefined;
@@ -373,7 +386,7 @@ async function getProjectInfo(): Promise<{ folder: string; description?: string 
 			if (lines.length >= 3) break; // Max 3 lines for description
 		}
 		if (lines.length > 0) {
-			description = lines.join(" ").slice(0, 200);
+			description = convertMarkdownToHTML(lines.join(" ").slice(0, 200));
 		}
 	} catch {
 		// AGENTS.md not found - that's fine
