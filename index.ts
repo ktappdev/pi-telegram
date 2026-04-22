@@ -1301,11 +1301,17 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event) => {
-		const suffix = isTelegramPrompt(event.prompt)
-			? `${SYSTEM_PROMPT_SUFFIX}\n- The current user message came from Telegram.`
-			: SYSTEM_PROMPT_SUFFIX;
+		// FIX: previously SYSTEM_PROMPT_SUFFIX was always appended (even for non-Telegram turns),
+		// causing HTML formatting instructions to bleed into normal terminal sessions.
+		// Now we only inject when the prompt actually came from Telegram.
+		// REVERT: restore the original block if this causes issues:
+		//   const suffix = isTelegramPrompt(event.prompt)
+		//     ? `${SYSTEM_PROMPT_SUFFIX}\n- The current user message came from Telegram.`
+		//     : SYSTEM_PROMPT_SUFFIX;
+		//   return { systemPrompt: event.systemPrompt + suffix };
+		if (!isTelegramPrompt(event.prompt)) return {};
 		return {
-			systemPrompt: event.systemPrompt + suffix,
+			systemPrompt: event.systemPrompt + SYSTEM_PROMPT_SUFFIX + "\n- The current user message came from Telegram.",
 		};
 	});
 
