@@ -1003,11 +1003,22 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
+		if (lower === "/version") {
+			try {
+				const pkgPath = new URL('./package.json', import.meta.url).pathname;
+				const pkg = JSON.parse(await readFile(pkgPath, "utf8"));
+				await sendTextReply(firstMessage.chat.id, firstMessage.message_id, `pi-telegram v${pkg.version}`);
+			} catch {
+				await sendTextReply(firstMessage.chat.id, firstMessage.message_id, "pi-telegram (version unknown)");
+			}
+			return;
+		}
+
 		if (lower === "/help" || lower === "/start") {
 			const isGroup = isGroupChat(firstMessage);
 			const helpText = isGroup
-				? `Mention me or reply to my messages to chat with pi. Commands: /status, /compact, stop.`
-				: `Send me a message and I will forward it to pi. Commands: /status, /compact, stop.`;
+				? `Mention me or reply to my messages to chat with pi. Commands: /status, /version, /compact, stop.`
+				: `Send me a message and I will forward it to pi. Commands: /status, /version, /compact, stop.`;
 			await sendTextReply(
 				firstMessage.chat.id,
 				firstMessage.message_id,
