@@ -79,6 +79,12 @@ interface TelegramSticker {
 	emoji?: string;
 }
 
+interface MessageEntity {
+	type: string;
+	offset: number;
+	length: number;
+}
+
 interface TelegramFileInfo {
 	file_id: string;
 	fileName: string;
@@ -100,6 +106,9 @@ interface TelegramMessage {
 	voice?: TelegramVoice;
 	animation?: TelegramAnimation;
 	sticker?: TelegramSticker;
+	entities?: MessageEntity[];
+	caption_entities?: MessageEntity[];
+	reply_to_message?: TelegramMessage;
 }
 
 interface TelegramUpdate {
@@ -182,6 +191,7 @@ Context about Telegram:
 - User is messaging from Telegram, a mobile-first chat app. Expect asynchronous conversations with possible time gaps between messages.
 - Keep responses concise and scannable when appropriate, as mobile users read on small screens.
 - If a conversation resumes after a long gap (>24h), the user may be starting a new topic or context has been lost. A gap notice is prepended to the prompt if applicable.
+- If the prompt is prefixed with "[telegram] (group)", the message came from a Telegram group. You are being addressed via @mention or reply. Keep responses appropriate for a group audience.
 
 Response style for Telegram:
 - Keep responses short, chat-friendly, and easy to scan on mobile.
@@ -450,6 +460,40 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		ctx.ui.setStatus("telegram", `${label} ${theme.fg("success", "connected")}`);
+	}
+
+	function isGroupChat(message: TelegramMessage): boolean {
+		return message.chat.type === "group" || message.chat.type === "supergroup";
+	}
+
+	function messageIsForBot(message: TelegramMessage): boolean {
+		// Private chats: all messages are for the bot
+		if (message.chat.type === "private") return true;
+
+		// Groups: check if bot is @mentioned in text or caption
+		if (config.botUsername) {
+			const allEntities = [...(message.entities ?? []), ...(message.caption_entities ?? [])];
+			const fullText = (message.text || message.caption || "");
+			const hasMention = allEntities.some((e) => {
+				if (e.type !== "mention") return false;
+				const mentionText = fullText.slice(e.offset, e.offset + e.length);
+				return mentionText.toLowerCase() === `@${config.botUsername!.toLowerCase()}`;
+			});
+			if (hasMention) return true;
+		}
+
+		// Groups: check if message is reply to bot's message
+		if (message.reply_to_message?.from?.id === config.botId) return true;
+
+		return false;
+	}
+
+	function stripBotMention(text: string): string {
+		if (!config.botUsername) return text;
+		const mention = `@${config.botUsername}`;
+		const escaped = mention.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const regex = new RegExp(`\\s*${escaped}\\s*`, "gi");
+		return text.replace(regex, " ").replace(/\s+/g, " ").trim();
 	}
 
 	async function callTelegram<TResponse>(
@@ -812,10 +856,15 @@ export default function (pi: ExtensionAPI) {
 	): Promise<PendingTelegramTurn> {
 		const firstMessage = messages[0];
 		if (!firstMessage) throw new Error("Missing Telegram message for turn creation");
-		const rawText = messages.map((message) => (message.text || message.caption || "").trim()).filter(Boolean).join("\n\n");
+		const isGroup = isGroupChat(firstMessage);
+		const rawText = messages.map((message) => {
+			const text = (message.text || message.caption || "").trim();
+			return isGroup ? stripBotMention(text) : text;
+		}).filter(Boolean).join("\n\n");
 		const files = await buildTelegramFiles(messages);
 		const content: Array<TextContent | ImageContent> = [];
-		let prompt = `${TELEGRAM_PREFIX}`;
+		const chatPrefix = isGroup ? `${TELEGRAM_PREFIX} (group)` : TELEGRAM_PREFIX;
+		let prompt = `${chatPrefix}`;
 
 		if (historyTurns.length > 0) {
 			prompt += `\n\nEarlier Telegram messages arrived after an aborted turn. Treat them as prior user messages, in order:`;
@@ -955,12 +1004,17 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (lower === "/help" || lower === "/start") {
+			const isGroup = isGroupChat(firstMessage);
+			const helpText = isGroup
+				? `Mention me or reply to my messages to chat with pi. Commands: /status, /compact, stop.`
+				: `Send me a message and I will forward it to pi. Commands: /status, /compact, stop.`;
 			await sendTextReply(
 				firstMessage.chat.id,
 				firstMessage.message_id,
-				`Send me a message and I will forward it to pi. Commands: /status, /compact, stop.`,
+				helpText,
 			);
-			if (config.allowedUserId === undefined && firstMessage.from) {
+			// Only auto-pair in private chats
+			if (!isGroup && config.allowedUserId === undefined && firstMessage.from) {
 				config.allowedUserId = firstMessage.from.id;
 				await writeConfig(config);
 				updateStatus(ctx);
@@ -1012,19 +1066,31 @@ export default function (pi: ExtensionAPI) {
 
 	async function handleUpdate(update: TelegramUpdate, ctx: ExtensionContext): Promise<void> {
 		const message = update.message || update.edited_message;
-		if (!message || message.chat.type !== "private" || !message.from || message.from.is_bot) return;
+		if (!message || !message.from || message.from.is_bot) return;
 
-		if (config.allowedUserId === undefined) {
-			config.allowedUserId = message.from.id;
-			await writeConfig(config);
-			updateStatus(ctx);
-			ctx.ui.notify(`Telegram bridge paired with @${message.from.username ?? message.from.id}.`, "info");
-			await sendTextReply(message.chat.id, message.message_id, "Telegram bridge paired with this account.");
-		}
+		if (message.chat.type === "private") {
+			// Private chat: handle pairing and auth
+			if (config.allowedUserId === undefined) {
+				config.allowedUserId = message.from.id;
+				await writeConfig(config);
+				updateStatus(ctx);
+				ctx.ui.notify(`Telegram bridge paired with @${message.from.username ?? message.from.id}.`, "info");
+				await sendTextReply(message.chat.id, message.message_id, "Telegram bridge paired with this account.");
+			}
 
-		if (message.from.id !== config.allowedUserId) {
-			await sendTextReply(message.chat.id, message.message_id, "This bot is not authorized for your account.");
-			return;
+			if (message.from.id !== config.allowedUserId) {
+				await sendTextReply(message.chat.id, message.message_id, "This bot is not authorized for your account.");
+				return;
+			}
+		} else {
+			// Group/supergroup: only process if bot is mentioned or reply to bot
+			if (!isGroupChat(message) || !messageIsForBot(message)) return;
+
+			// Need at least one paired user before group mode works
+			if (config.allowedUserId === undefined) {
+				await sendTextReply(message.chat.id, message.message_id, "Please DM the bot first and send /start to pair it with your account before using it in groups.");
+				return;
+			}
 		}
 
 		await handleAuthorizedTelegramMessage(message, ctx);
