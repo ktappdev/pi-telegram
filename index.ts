@@ -948,7 +948,11 @@ export default function (pi: ExtensionAPI) {
 		config.lastTelegramMessageTime = now;
 		await writeConfig(config);
 
-		const rawText = messages.map((message) => (message.text || message.caption || "").trim()).find((text) => text.length > 0) || "";
+		const isGroup = isGroupChat(firstMessage);
+		const rawText = messages.map((message) => {
+			const text = (message.text || message.caption || "").trim();
+			return isGroup ? stripBotMention(text) : text;
+		}).find((text) => text.length > 0) || "";
 		const lower = rawText.toLowerCase();
 
 		if (lower === "stop" || lower === "/stop") {
@@ -1434,10 +1438,18 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("message_start", async (event, _ctx) => {
 		if (!activeTelegramTurn || !isAssistantMessage(event.message)) return;
-		if (previewState && (previewState.pendingText.trim().length > 0 || previewState.lastSentText.trim().length > 0)) {
-			await finalizePreview(activeTelegramTurn.chatId);
+		// Don't finalize previous preview — just reset pending text.
+		// This keeps the same messageId so next assistant message edits the
+		// existing message instead of sending a duplicate (fixes double-reply in groups).
+		if (previewState) {
+			if (previewState.flushTimer) {
+				clearTimeout(previewState.flushTimer);
+				previewState.flushTimer = undefined;
+			}
+			previewState.pendingText = "";
+		} else {
+			previewState = { mode: draftSupport === "unsupported" ? "message" : "draft", pendingText: "", lastSentText: "" };
 		}
-		previewState = { mode: draftSupport === "unsupported" ? "message" : "draft", pendingText: "", lastSentText: "" };
 	});
 
 	pi.on("message_update", async (event, _ctx) => {
