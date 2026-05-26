@@ -625,6 +625,7 @@ export default function (pi: ExtensionAPI) {
 			const draftId = state.draftId ?? allocateDraftId();
 			state.draftId = draftId;
 			try {
+				console.log("[telegram] flushPreview: sendMessageDraft", { chatId, draftId, len: truncated.length });
 				await callTelegram("sendMessageDraft", { chat_id: chatId, draft_id: draftId, text: truncated });
 				draftSupport = "supported";
 				state.mode = "draft";
@@ -636,12 +637,14 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (state.messageId === undefined) {
+			console.log("[telegram] flushPreview: sendMessage (new)", { chatId, len: truncated.length, text: truncated.slice(0, 80) });
 			const sent = await sendMessageSafe(chatId, truncated);
 			state.messageId = sent.message_id;
 			state.mode = "message";
 			state.lastSentText = truncated;
 			return;
 		}
+		console.log("[telegram] flushPreview: editMessageText", { chatId, messageId: state.messageId, len: truncated.length });
 		try {
 			await callTelegram("editMessageText", { chat_id: chatId, message_id: state.messageId, text: truncated, parse_mode: "HTML" });
 		} catch (error) {
@@ -678,11 +681,13 @@ export default function (pi: ExtensionAPI) {
 			return false;
 		}
 		if (state.mode === "draft") {
+			console.log("[telegram] finalizePreview: sendMessage (draft final)", { chatId, len: finalText.length, text: finalText.slice(0, 80) });
 			await sendMessageSafe(chatId, finalText);
 			await clearPreview(chatId);
 			return true;
 		}
 		previewState = undefined;
+		console.log("[telegram] finalizePreview: message mode, skipping (messageId exists)");
 		return state.messageId !== undefined;
 	}
 
@@ -712,6 +717,7 @@ export default function (pi: ExtensionAPI) {
 		const chunks = chunkParagraphs(text);
 		let lastMessageId: number | undefined;
 		for (const chunk of chunks) {
+			console.log("[telegram] sendTextReply", { chatId, len: chunk.length, text: chunk.slice(0, 80) });
 			const sent = await sendMessageSafe(chatId, chunk);
 			lastMessageId = sent.message_id;
 		}
@@ -1152,6 +1158,7 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
+		console.log("[telegram] handleUpdate: processing", { chatType: message.chat.type, messageId: message.message_id, fromId: message.from?.id, text: (message.text || message.caption || "").slice(0, 60) });
 		await handleAuthorizedTelegramMessage(message, ctx);
 	}
 
@@ -1455,6 +1462,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("message_start", async (event, _ctx) => {
 		if (!activeTelegramTurn || !isAssistantMessage(event.message)) return;
+		console.log("[telegram] message_start fired", { hasPreviewState: !!previewState, mode: previewState?.mode, messageId: previewState?.messageId });
 		// Don't finalize previous preview — just reset pending text.
 		// This keeps the same messageId so next assistant message edits the
 		// existing message instead of sending a duplicate (fixes double-reply in groups).
@@ -1484,9 +1492,10 @@ export default function (pi: ExtensionAPI) {
 		stopTypingLoop();
 		activeTelegramTurn = undefined;
 		updateStatus(ctx);
-		if (!turn) return;
+		if (!turn) { console.log("[telegram] agent_end: no active turn, skipping"); return; }
 
 		const assistant = extractAssistantText(event.messages);
+		console.log("[telegram] agent_end", { stopReason: assistant.stopReason, hasText: !!assistant.text, textLen: assistant.text?.length });
 		if (assistant.stopReason === "aborted") {
 			await clearPreview(turn.chatId);
 			return;
