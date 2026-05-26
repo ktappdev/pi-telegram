@@ -645,8 +645,13 @@ export default function (pi: ExtensionAPI) {
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
 			if (msg.includes("can't parse entities") || msg.includes("Can't find end tag")) {
-				await callTelegram("editMessageText", { chat_id: chatId, message_id: state.messageId, text: truncated });
-			} else {
+				try {
+					await callTelegram("editMessageText", { chat_id: chatId, message_id: state.messageId, text: truncated });
+				} catch (error2) {
+					const msg2 = error2 instanceof Error ? error2.message : String(error2);
+					if (!msg2.includes("message is not modified")) throw error2;
+				}
+			} else if (!msg.includes("message is not modified")) {
 				throw error;
 			}
 		}
