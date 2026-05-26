@@ -634,13 +634,22 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (state.messageId === undefined) {
-			const sent = await callTelegram<TelegramSentMessage>("sendMessage", { chat_id: chatId, text: truncated, parse_mode: "HTML" });
+			const sent = await sendMessageSafe(chatId, truncated);
 			state.messageId = sent.message_id;
 			state.mode = "message";
 			state.lastSentText = truncated;
 			return;
 		}
-		await callTelegram("editMessageText", { chat_id: chatId, message_id: state.messageId, text: truncated });
+		try {
+			await callTelegram("editMessageText", { chat_id: chatId, message_id: state.messageId, text: truncated, parse_mode: "HTML" });
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			if (msg.includes("can't parse entities") || msg.includes("Can't find end tag")) {
+				await callTelegram("editMessageText", { chat_id: chatId, message_id: state.messageId, text: truncated });
+			} else {
+				throw error;
+			}
+		}
 		state.mode = "message";
 		state.lastSentText = truncated;
 	}
@@ -662,7 +671,7 @@ export default function (pi: ExtensionAPI) {
 			return false;
 		}
 		if (state.mode === "draft") {
-			await callTelegram<TelegramSentMessage>("sendMessage", { chat_id: chatId, text: finalText, parse_mode: "HTML" });
+			await sendMessageSafe(chatId, finalText);
 			await clearPreview(chatId);
 			return true;
 		}
@@ -670,15 +679,33 @@ export default function (pi: ExtensionAPI) {
 		return state.messageId !== undefined;
 	}
 
+	async function sendMessageSafe(chatId: number, text: string, extra?: Record<string, unknown>): Promise<TelegramSentMessage> {
+		try {
+			return await callTelegram<TelegramSentMessage>("sendMessage", {
+				chat_id: chatId,
+				text,
+				parse_mode: "HTML",
+				...extra,
+			});
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			if (msg.includes("can't parse entities") || msg.includes("Can't find end tag")) {
+				// Fall back to plain text if HTML is malformed
+				return await callTelegram<TelegramSentMessage>("sendMessage", {
+					chat_id: chatId,
+					text,
+					...extra,
+				});
+			}
+			throw error;
+		}
+	}
+
 	async function sendTextReply(chatId: number, _replyToMessageId: number, text: string): Promise<number | undefined> {
 		const chunks = chunkParagraphs(text);
 		let lastMessageId: number | undefined;
 		for (const chunk of chunks) {
-			const sent = await callTelegram<TelegramSentMessage>("sendMessage", {
-			chat_id: chatId,
-			text: chunk,
-			parse_mode: "HTML",
-		});
+			const sent = await sendMessageSafe(chatId, chunk);
 			lastMessageId = sent.message_id;
 		}
 		return lastMessageId;
