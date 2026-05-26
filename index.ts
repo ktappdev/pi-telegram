@@ -429,6 +429,8 @@ export default function (pi: ExtensionAPI) {
 	let draftSupport: "unknown" | "supported" | "unsupported" = "unknown";
 	let nextDraftId = 0;
 	const mediaGroups = new Map<string, TelegramMediaGroupState>();
+	// Dedupe: track recently processed message IDs to prevent double-processing
+	const processedMessages = new Set<string>();
 
 	function allocateDraftId(): number {
 		nextDraftId = nextDraftId >= TELEGRAM_DRAFT_ID_MAX ? 1 : nextDraftId + 1;
@@ -1114,6 +1116,16 @@ export default function (pi: ExtensionAPI) {
 	async function handleUpdate(update: TelegramUpdate, ctx: ExtensionContext): Promise<void> {
 		const message = update.message || update.edited_message;
 		if (!message || !message.from || message.from.is_bot) return;
+
+		// Dedupe: skip if we already processed this message in this session
+		const dedupeKey = `${message.chat.id}:${message.message_id}`;
+		if (processedMessages.has(dedupeKey)) return;
+		processedMessages.add(dedupeKey);
+		// Trim set to prevent unbounded growth
+		if (processedMessages.size > 200) {
+			const it = processedMessages.values();
+			for (let i = 0; i < 100; i++) processedMessages.delete(it.next().value);
+		}
 
 		if (message.chat.type === "private") {
 			// Private chat: handle pairing and auth
