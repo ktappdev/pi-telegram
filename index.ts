@@ -1153,6 +1153,9 @@ export default function (pi: ExtensionAPI) {
 			// Group/supergroup: only process if bot is mentioned or reply to bot
 			if (!isGroupChat(message) || !messageIsForBot(message)) return;
 
+			// Guard against bot processing its own messages (prevents duplicate replies in groups)
+			if (message.from.id === config.botId) return;
+
 			// Need at least one paired user before group mode works
 			if (config.allowedUserId === undefined) {
 				await sendTextReply(message.chat.id, message.message_id, "Please DM the bot first and send /start to pair it with your account before using it in groups.");
