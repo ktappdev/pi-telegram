@@ -693,6 +693,8 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function sendMessageSafe(chatId: number, text: string, extra?: Record<string, unknown>): Promise<TelegramSentMessage> {
+		const textPreview = text.slice(0, 50);
+		console.log(`[DEDUP-TRACE] sendMessageSafe chatId=${chatId} text="${textPreview}" len=${text.length}`);
 		try {
 			return await callTelegram<TelegramSentMessage>("sendMessage", {
 				chat_id: chatId,
@@ -715,6 +717,8 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function sendTextReply(chatId: number, _replyToMessageId: number, text: string): Promise<number | undefined> {
+		const textPreview = text.slice(0, 50);
+		console.log(`[DEDUP-TRACE] sendTextReply chatId=${chatId} replyTo=${_replyToMessageId} text="${textPreview}" len=${text.length}`);
 		const chunks = chunkParagraphs(text);
 		let lastMessageId: number | undefined;
 		for (const chunk of chunks) {
@@ -1082,6 +1086,7 @@ export default function (pi: ExtensionAPI) {
 		const historyTurns = preserveQueuedTurnsAsHistory ? queuedTelegramTurns.splice(0) : [];
 		preserveQueuedTurnsAsHistory = false;
 		const turn = await createTelegramTurn(messages, historyTurns);
+		console.log(`[DEDUP-TRACE] TURN-CREATED chatId=${turn.chatId} replyTo=${turn.replyToMessageId} queuedCount=${queuedTelegramTurns.length}`);
 
 		// Inject gap notice if conversation resumed after >24 hours
 		if (wasGap && lastTime > 0) {
@@ -1095,6 +1100,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		queuedTelegramTurns.push(turn);
+		console.log(`[DEDUP-TRACE] TURN-QUEUED chatId=${turn.chatId} replyTo=${turn.replyToMessageId} queueSize=${queuedTelegramTurns.length}`);
 		if (ctx.isIdle()) {
 			startTypingLoop(ctx, turn.chatId);
 			updateStatus(ctx);
@@ -1123,12 +1129,27 @@ export default function (pi: ExtensionAPI) {
 
 	async function handleUpdate(update: TelegramUpdate, ctx: ExtensionContext): Promise<void> {
 		const message = update.message || update.edited_message;
-		if (!message || !message.from || message.from.is_bot) return;
+		if (!message) return;
+		const chatId = message.chat.id;
+		const messageId = message.message_id;
+		const fromId = message.from?.id;
+		const isGroup = isGroupChat(message);
+		const isBot = message.from?.is_bot ?? false;
+		const textPreview = (message.text || message.caption || "").slice(0, 50);
+		console.log(`[DEDUP-TRACE] handleUpdate ENTRY chatId=${chatId} messageId=${messageId} fromId=${fromId} isGroup=${isGroup} isBot=${isBot} text="${textPreview}"`);
+		if (!message.from || message.from.is_bot) {
+			console.log(`[DEDUP-TRACE] handleUpdate FILTERED-BOT chatId=${chatId} messageId=${messageId} fromId=${fromId}`);
+			return;
+		}
 
 		// Dedupe: skip if we already processed this message in this session
 		const dedupeKey = `${message.chat.id}:${message.message_id}`;
-		if (processedMessages.has(dedupeKey)) return;
+		if (processedMessages.has(dedupeKey)) {
+			console.log(`[DEDUP-TRACE] handleUpdate DEDUP-SKIP chatId=${chatId} messageId=${messageId} fromId=${fromId}`);
+			return;
+		}
 		processedMessages.add(dedupeKey);
+		console.log(`[DEDUP-TRACE] handleUpdate DEDUP-NEW chatId=${chatId} messageId=${messageId} fromId=${fromId}`);
 		// Trim set to prevent unbounded growth
 		if (processedMessages.size > 200) {
 			const it = processedMessages.values();
@@ -1151,7 +1172,12 @@ export default function (pi: ExtensionAPI) {
 			}
 		} else {
 			// Group/supergroup: only process if bot is mentioned or reply to bot
-			if (!isGroupChat(message) || !messageIsForBot(message)) return;
+			const messageIsForBotResult = messageIsForBot(message);
+			console.log(`[DEDUP-TRACE] handleUpdate GROUP-BRANCH chatId=${chatId} messageId=${messageId} fromId=${fromId} messageIsForBot=${messageIsForBotResult}`);
+			if (!isGroupChat(message) || !messageIsForBotResult) {
+				console.log(`[DEDUP-TRACE] handleUpdate GROUP-SKIP chatId=${chatId} messageId=${messageId} fromId=${fromId}`);
+				return;
+			}
 
 			// Guard against bot processing its own messages (prevents duplicate replies in groups)
 			if (message.from.id === config.botId) return;
@@ -1453,11 +1479,13 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
+		console.log(`[DEDUP-TRACE] agent_start activeTurn=${!!activeTelegramTurn} queued=${queuedTelegramTurns.length}`);
 		currentAbort = () => ctx.abort();
 		if (!activeTelegramTurn && queuedTelegramTurns.length > 0) {
 			const nextTurn = queuedTelegramTurns.shift();
 			if (nextTurn) {
 				activeTelegramTurn = { ...nextTurn };
+				console.log(`[DEDUP-TRACE] agent_start ACTIVATED chatId=${activeTelegramTurn.chatId} replyTo=${activeTelegramTurn.replyToMessageId}`);
 				previewState = { mode: draftSupport === "unsupported" ? "message" : "draft", pendingText: "", lastSentText: "" };
 				startTypingLoop(ctx);
 			}
@@ -1488,6 +1516,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("agent_end", async (event, ctx) => {
 		const turn = activeTelegramTurn;
+		console.log(`[DEDUP-TRACE] agent_end chatId=${turn?.chatId} replyTo=${turn?.replyToMessageId}`);
 		currentAbort = undefined;
 		stopTypingLoop();
 		activeTelegramTurn = undefined;
