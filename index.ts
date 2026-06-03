@@ -683,8 +683,8 @@ export default function (pi: ExtensionAPI) {
 		}
 		if (state.mode === "draft") {
 			console.log("[telegram] finalizePreview: sendMessage (draft final)", { chatId, len: finalText.length, text: finalText.slice(0, 80) });
-			await sendMessageSafe(chatId, finalText);
 			await clearPreview(chatId);
+			await sendMessageSafe(chatId, finalText);
 			return true;
 		}
 		previewState = undefined;
