@@ -1465,16 +1465,11 @@ export default function (pi: ExtensionAPI) {
 	pi.on("message_start", async (event, _ctx) => {
 		if (!activeTelegramTurn || !isAssistantMessage(event.message)) return;
 		console.log("[telegram] message_start fired", { hasPreviewState: !!previewState, mode: previewState?.mode, messageId: previewState?.messageId });
-		// Don't finalize previous preview — just reset pending text.
-		// This keeps the same messageId so next assistant message edits the
-		// existing message instead of sending a duplicate (fixes double-reply in groups).
-		if (previewState) {
-			if (previewState.flushTimer) {
-				clearTimeout(previewState.flushTimer);
-				previewState.flushTimer = undefined;
-			}
-			previewState.pendingText = "";
-		} else {
+		// Don't finalize previous preview — keep existing state so the same
+		// messageId is preserved. The next message_update will overwrite pendingText,
+		// and flushPreview will edit the existing message instead of sending a duplicate.
+		// This fixes double-reply in groups when multiple assistant messages occur in one turn.
+		if (!previewState) {
 			previewState = { mode: draftSupport === "unsupported" ? "message" : "draft", pendingText: "", lastSentText: "" };
 		}
 	});
