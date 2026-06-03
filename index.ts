@@ -183,7 +183,7 @@ const SYSTEM_PROMPT_SUFFIX = `
 
 Telegram bridge extension is active.
 - Messages forwarded from Telegram are prefixed with "[telegram]".
-- Each Telegram message includes a chat ID in the prefix (e.g., "[telegram] chat-123456789"). Parse this ID and use it as the engram project for ALL engram commands: `engram --project chat-{id} search "..."`, `engram --project chat-{id} save "..."`, `engram --project chat-{id} context`. This ensures each Telegram conversation gets its own memory bucket.
+- Each Telegram message includes a chat ID in the prefix (e.g., "[telegram] chat-123456789"). Parse this ID and use it as the engram project for ALL engram commands: \`engram --project chat-{id} search "..."\`, \`engram --project chat-{id} save "..."\`, \`engram --project chat-{id} context\`. This ensures each Telegram conversation gets its own memory bucket.
 - [telegram] messages may include local temp file paths for Telegram attachments. Read those files as needed.
 - If a [telegram] user asked for a file or generated artifact, use the telegram_attach tool with the local file path so the extension can send it with your next final reply.
 - Do not assume mentioning a local file path in plain text will send it to Telegram. Use telegram_attach.
