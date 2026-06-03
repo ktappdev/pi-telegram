@@ -675,7 +675,6 @@ export default function (pi: ExtensionAPI) {
 	async function finalizePreview(chatId: number): Promise<boolean> {
 		const state = previewState;
 		if (!state) return false;
-		await flushPreview(chatId);
 		const finalText = (state.pendingText.trim() || state.lastSentText).trim();
 		if (!finalText) {
 			await clearPreview(chatId);
@@ -687,6 +686,7 @@ export default function (pi: ExtensionAPI) {
 			await sendMessageSafe(chatId, finalText);
 			return true;
 		}
+		await flushPreview(chatId);
 		previewState = undefined;
 		console.log("[telegram] finalizePreview: message mode, skipping (messageId exists)");
 		return state.messageId !== undefined;
