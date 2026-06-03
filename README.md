@@ -162,6 +162,14 @@ Example notice: `[telegram] ⚠️ It's been 3 days since your last message. You
 
 This helps pi understand that you might be starting a new topic rather than continuing a previous conversation.
 
+### Per-chat memory
+
+Each Telegram conversation gets its own engram memory bucket. The extension:
+- Includes the chat ID in the message prefix: `[telegram] chat-123456789` (private) or `[telegram] (group) chat-123456789` (group)
+- Instructs the agent to use `--project chat-{id}` with all engram commands
+
+This keeps conversations isolated in memory — your private DM and group chats don't share context, and different Telegram chats maintain separate engram histories.
+
 ## License
 
 MIT
